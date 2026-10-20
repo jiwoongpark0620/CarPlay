@@ -6,8 +6,12 @@
  * slow moment costs a skipped picture instead of latency that keeps growing.
  *
  * URL options:
- *   ?size=1280x800   CarPlay session size (session override, type 11). Default 1280x800.
- *   ?size=auto       let the adapter derive the size from the page (800 x 800*h/w).
+ *   (default)        Auto: the adapter sizes the CarPlay session from the hello (page size).
+ *                    Firmware 3075 (26081415.5.1.5) uses the hello size as is and ignores the
+ *                    type-11 override, so this is the mode that works there.
+ *   ?hidpi=1         send the page size x devicePixelRatio in the hello (sharper, more pixels).
+ *   ?scale=1.25      same with an explicit factor.
+ *   ?size=1280x800   try the session override instead (works on branch 1508, not on 3075).
  *   ?stats=1         fps / bitrate / decode time overlay.
  *   ?ws=...          adapter WebSocket URL (default wss://tespush.com/).
  */
@@ -32,17 +36,39 @@
     if (w < 320 || h < 240 || w * h > 1376 * 1072) return null;
     return { w: w, h: h };
   }
-  var sizeParam = params.get('size');
-  // A size the adapter did not honour once is remembered; ?size=... in the URL tries again.
-  if (sizeParam) store.set('auto', null);
-  var SIZE = sizeParam === 'auto' || (!sizeParam && store.get('auto') === '1') ? null
-           : (parseSize(sizeParam) || { w: 1280, h: 800 });
+  var SIZE = parseSize(params.get('size'));     // null = Auto (default)
+  var SCALE = params.get('hidpi') === '1' ? (window.devicePixelRatio || 1) : (parseFloat(params.get('scale')) || 1);
+  SCALE = Math.max(0.5, Math.min(2, SCALE));
+  function helloSize() {
+    var w = Math.round(window.innerWidth * SCALE), h = Math.round(window.innerHeight * SCALE);
+    var k = Math.min(1, 2400 / w, 2400 / h);        // hello stores w/10, h/10 in a byte each
+    return { w: Math.round(w * k), h: Math.round(h * k) };
+  }
 
   /* ------------------------------------------------------------------- state */
 
   var state = { init: false, link: -1, pixel: 3, vid: false, restartAt: 0, restarts: 0, restartTimer: 0, sizeChecked: false, sizeTries: 0, rx: 0, shown: false, videoAt: 0 };
   var link = new LinkClient();
   var presenter = null;
+
+  /* Event log (last 80, kept across reloads): shown with ?log=1, so a problem can be read back. */
+  var LOG_MAX = 80;
+  function logEvent(k, d) {
+    var list = [];
+    try { list = JSON.parse(store.get('log') || '[]'); } catch (e) { /* ignore */ }
+    list.push([Date.now(), k, d === undefined ? '' : String(d)]);
+    if (list.length > LOG_MAX) list = list.slice(-LOG_MAX);
+    store.set('log', JSON.stringify(list));
+    if (params.get('log') === '1') renderLog(list);
+  }
+  function renderLog(list) {
+    var el = document.getElementById('log');
+    if (!el) { el = document.createElement('pre'); el.id = 'log'; document.body.appendChild(el); }
+    el.textContent = list.slice(-25).map(function (e) {
+      var t = new Date(e[0]);
+      return ('0' + t.getMinutes()).slice(-2) + ':' + ('0' + t.getSeconds()).slice(-2) + '.' + ('00' + t.getMilliseconds()).slice(-3) + ' ' + e[1] + ' ' + e[2];
+    }).join('\n');
+  }
 
   function msg(text) {
     var el = $('msg');
@@ -76,6 +102,7 @@
     if (wait > 0) { state.restartTimer = setTimeout(function () { state.restartTimer = 0; restartSession(why); }, wait); return; }
     if (state.restarts >= 3) { msg('화면 설정이 적용되지 않습니다 (' + why + ').\n어댑터를 재연결한 뒤 다시 열어 주세요.'); return; }
     state.restartAt = Date.now(); state.restarts++;
+    logEvent('restart', why + ' (#' + state.restarts + ', pixel ' + state.pixel + ', size ' + (SIZE ? SIZE.w + 'x' + SIZE.h : 'auto') + ')');
     state.sizeChecked = false;
     msg('CarPlay 세션 다시 시작 중…');
     if (SIZE) {
@@ -101,6 +128,7 @@
     if (n === state.link) return;
     var prev = state.link;
     state.link = n;
+    logEvent('link', prev + '->' + n);
     if (n > 1) {
       link.cmd(CMD.VIDEO);
       presenter.startH264();
@@ -116,6 +144,7 @@
   }
 
   function onInit(j) {
+    logEvent('init', 'link ' + j.link + ' phone ' + j.phone + ' vid ' + j.vid + ' pixel ' + j.pixel + ' ' + (j.SW || ''));
     state.init = true;
     state.pixel = j.pixel;
     sendOverride();
@@ -133,6 +162,7 @@
 
   /* The decoder reports the size of the stream it gets: check that the session is what we asked for. */
   function onSize(w, h) {
+    logEvent('size', w + 'x' + h);
     if (state.sizeChecked) return;
     state.sizeChecked = true;
     if (!SIZE) return;
@@ -179,6 +209,8 @@
   /* ----------------------------------------------------------------- boot */
 
   function boot() {
+    logEvent('boot', location.search || '-');
+    if (params.get('log') === '1') { try { renderLog(JSON.parse(store.get('log') || '[]')); } catch (e) { /* ignore */ } }
     if (!VideoPresenter.canH264() || !VideoPresenter.wasmSimd()) {
       msg('이 브라우저에서는 H.264 디코딩을 할 수 없습니다\n(WebAssembly SIMD / OffscreenCanvas 필요)');
       return;
@@ -207,8 +239,28 @@
       .on('video', function (bytes) { if (state.link > 1) { state.rx++; presenter.feedH264(bytes); } })
       .on('videodrop', function () { presenter.noteDrop(); })
       .on('superseded', function () { setLink(-1); msg('다른 화면이 어댑터를 사용 중입니다\n화면을 누르면 다시 연결합니다'); })
-      .on('close', function () { state.init = false; setLink(-1); })
-      .on('open', function () { msg('어댑터 연결됨'); });
+      .on('close', function (code) { logEvent('close', code === undefined ? 'dropped' : code); state.init = false; setLink(-1); flapCheck(); })
+      .on('pingtimeout', function () { logEvent('pingtimeout'); })
+      .on('reload', function () { logEvent('reload-msg'); })
+      .on('superseded', function () { logEvent('superseded'); })
+      .on('open', function () { logEvent('open'); msg('어댑터 연결됨'); });
+
+    /* The socket keeps dropping and coming back (seen right after the first start: picture -> video
+     * switch and session restarts). A page reload has always settled it, so do that once, not more
+     * often than once a minute. */
+    var closes = [];
+    function flapCheck() {
+      var t = Date.now();
+      closes.push(t);
+      closes = closes.filter(function (c) { return t - c < 20000; });
+      if (closes.length < 4) return;
+      var last = 0;
+      try { last = +sessionStorage.getItem('cp.flapReload') || 0; } catch (e) { /* ignore */ }
+      if (t - last < 60000) return;
+      try { sessionStorage.setItem('cp.flapReload', String(t)); } catch (e) { /* ignore */ }
+      logEvent('flap-reload', closes.length + ' closes in 20 s');
+      location.reload();
+    }
 
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) { presenter.pause(); return; }
@@ -227,7 +279,19 @@
       else { msg('영상은 오는데 디코딩된 화면이 없습니다 (수신 ' + state.rx + ')\n?stats=1 로 열어 확인해 주세요.'); requestKeyframe(); }
     }, 2000);
 
-    link.connect({ w: window.innerWidth, h: window.innerHeight, lang: navigator.language, nav: getTesla() });
+    // Warm up DNS and TLS with a plain request first (a top-level visit to tespush.com did the same
+    // by hand): an opaque no-cors answer is enough, failure or a slow answer just moves on.
+    var hs = helloSize();
+    var hello = { w: hs.w, h: hs.h, lang: navigator.language, nav: getTesla() };
+    logEvent('hello', hs.w + 'x' + hs.h + (SCALE !== 1 ? ' (x' + SCALE.toFixed(2) + ')' : ''));
+    var started = false;
+    function start() { if (started) return; started = true; link.connect(hello); }
+    msg('어댑터 찾는 중…');
+    var adapterHttp = (params.get('ws') || 'wss://tespush.com/').replace(/^ws/, 'http');
+    try {
+      fetch(adapterHttp + '?warm=' + Date.now(), { mode: 'no-cors', cache: 'no-store' }).then(start, start);
+    } catch (e) { start(); }
+    setTimeout(start, 20000);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

@@ -81,7 +81,10 @@
     if (this.ws) { try { this.ws.close(); } catch (e) { /* ignore */ } }
     var ws = this.ws = new WebSocket(wsUrl(), 'tsl');
     ws.binaryType = 'arraybuffer';
-    var openTimeout = setTimeout(function () { try { ws.close(); } catch (e) { /* ignore */ } }, 3000);
+    // 3 s was enough on the adapter's own page. From an outside page the first connect also has to
+    // resolve tespush.com (the car/laptop tries public resolvers first, which time out when the hotspot
+    // has no internet) and do a full TLS handshake on the adapter's single core: allow more.
+    var openTimeout = setTimeout(function () { try { ws.close(); } catch (e) { /* ignore */ } }, LinkClient.OPEN_TIMEOUT || 3000);
 
     ws.onopen = function () {
       clearTimeout(openTimeout);
@@ -320,6 +323,7 @@
     try { return JSON.parse(this.decoder.decode(buf)); } catch (e) { console.warn('bad json', e); return null; }
   };
 
+  LinkClient.OPEN_TIMEOUT = 15000;
   global.LinkClient = LinkClient;
   global.LinkClient.CMD = CMD;
   global.LinkClient.KEY = KEY;
