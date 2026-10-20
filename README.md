@@ -11,7 +11,7 @@ Carlinkit T2C SE(펌웨어 26081414.3075.1, 브랜치 3075)를 테슬라에서 �
 ## 사용법
 1. Carlinkit을 차량에 세팅 (블루투스 및 WiFi 연결)
 2. https://www.tespush.com/ 에 접속하여 Carplay 화면 출력 확인 (화면 잘린 상태)
-3. https://jiwoongpark0620.github.io/CarPlay/?mode=picture 로 접속
+3. https://jiwoongpark0620.github.io/CarPlay/ 로 접속
 4. 업데이트가 완료될 동안 잠시 대기 (1.4 MB 다운로드, 인터넷 상황에 따라서 최대 2분정도 소요)
 (tespush.com 창이 열려있는 경우, 화면이 나오지 않기 때문에 탭을 무조건 닫아두어야 함)
 
