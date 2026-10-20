@@ -1,4 +1,4 @@
-Carlinkit T2C SE CarPlay 클라이언트
+# Carlinkit T2C SE CarPlay 클라이언트
 
 Carlinkit T2C SE(펌웨어 26081414.3075.1, 브랜치 3075)를 테슬라에서 쓸 때 생기는 순정 웹 화면 문제를 해결하기 위한 클라이언트. 순정 어댑터에 직접 연결하며, 어댑터 펌웨어는 건드리지 않는다.
 
