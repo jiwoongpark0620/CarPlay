@@ -18,6 +18,7 @@
 (function () {
   'use strict';
 
+  var BUILD = 'b4';    // shown in the log: tells which copy the car is running
   var CMD = LinkClient.CMD, KEY = LinkClient.KEY;
   function $(id) { return document.getElementById(id); }
 
@@ -217,15 +218,27 @@
   /* ----------------------------------------------------------------- boot */
 
   function boot() {
-    logEvent('boot', location.search || '-');
+    logEvent('boot', BUILD + ' ' + (location.search || '-'));
     // Offline copy: the car usually has no internet on the adapter's Wi-Fi.
     if ('serviceWorker' in navigator) {
       logEvent('sw', navigator.serviceWorker.controller ? 'offline copy in use' : 'not yet installed');
+      var hadController = !!navigator.serviceWorker.controller;
       navigator.serviceWorker.register('sw.js').then(function (reg) {
-        if (!navigator.serviceWorker.controller) {
+        if (!hadController) {
           navigator.serviceWorker.ready.then(function () { logEvent('sw', 'installed (works offline from the next visit)'); });
         }
+        // With internet, look for a new version now (not only on the browser's own schedule).
+        reg.update().then(function () { logEvent('sw', 'update check done'); }, function () { logEvent('sw', 'update check: offline'); });
+        reg.addEventListener('updatefound', function () { logEvent('sw', 'new version downloading…'); msg('새 버전 내려받는 중…'); });
       }, function (e) { logEvent('sw', 'register failed: ' + (e && e.message)); });
+      // A new version took over (it has all its files by then): reload once to run it.
+      var swReloading = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (!hadController || swReloading) return;
+        swReloading = true;
+        logEvent('sw', 'new version active, reloading');
+        location.reload();
+      });
       // What the offline copy actually holds (8 files when complete).
       try {
         caches.keys().then(function (keys) {
