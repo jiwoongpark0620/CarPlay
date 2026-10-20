@@ -18,7 +18,7 @@
 (function () {
   'use strict';
 
-  var BUILD = 'b5';    // shown in the log: tells which copy the car is running
+  var BUILD = 'b6';    // shown in the log: tells which copy the car is running
   var CMD = LinkClient.CMD, KEY = LinkClient.KEY;
   function $(id) { return document.getElementById(id); }
 
@@ -77,7 +77,11 @@
     else el.classList.add('hidden');
   }
 
+  /* The hello carries the browser's "Tesla/…" user-agent part. A laptop (no Tesla part, 'null')
+   * got a 1760x996 session in Auto while the car stays at 960 wide, so the firmware may pick a
+   * car-specific limit from it: ?nav=none sends 'null' from the car too. */
   function getTesla() {
+    if (params.get('nav') === 'none') return 'null';
     var u = navigator.userAgent, i = u.indexOf('Tesla');
     return i >= 0 ? u.substring(i) : 'null';
   }
@@ -354,7 +358,8 @@
     // by hand): an opaque no-cors answer is enough, failure or a slow answer just moves on.
     var hs = helloSize();
     var hello = { w: hs.w, h: hs.h, lang: navigator.language, nav: getTesla() };
-    logEvent('hello', hs.w + 'x' + hs.h + (SCALE !== 1 ? ' (x' + SCALE.toFixed(2) + ')' : ''));
+    logEvent('hello', hs.w + 'x' + hs.h + (SCALE !== 1 ? ' (x' + SCALE.toFixed(2) + ')' : '') +
+      ' view ' + window.innerWidth + 'x' + window.innerHeight + ' nav ' + (hello.nav === 'null' ? 'null' : 'tesla'));
     var started = false;
     function start() { if (started) return; started = true; link.connect(hello); }
     msg('어댑터 찾는 중…');
