@@ -21,13 +21,17 @@
 (function () {
   'use strict';
 
-  var BUILD = 'b12';
+  var BUILD = 'b13';
   var ADAPTER = 'https://tespush.com/';
   var CMD = LinkClient.CMD, KEY = LinkClient.KEY;
   var params = new URLSearchParams(location.search);
   var LOG = params.get('log') === '1';
   var PICTURE = params.get('mode') === 'picture';
   var REFRESH = Math.max(5, parseFloat(params.get('refresh')) || 15) * 1000;
+  // Picture mode: the adapter's JPEG need not have the session's shape (it can squeeze the 960x756
+  // session into its own picture size), so by default it is stretched over the whole stage, like the
+  // stock page does. ?fit=contain keeps the JPEG's own aspect instead.
+  var PIC_FILL = params.get('fit') !== 'contain';
   function $(id) { return document.getElementById(id); }
 
   /* ------------------------------------------------------------ log (?log=1 only) */
@@ -89,7 +93,7 @@
     toPerMille: function (cx, cy) {
       var r = this.img.getBoundingClientRect(), fw = this.img.naturalWidth, fh = this.img.naturalHeight;
       if (r.width <= 0 || r.height <= 0 || !fw || !fh) return null;
-      var k = Math.min(r.width / fw, r.height / fh), dw = fw * k, dh = fh * k;
+      var k = Math.min(r.width / fw, r.height / fh), dw = PIC_FILL ? r.width : fw * k, dh = PIC_FILL ? r.height : fh * k;
       var x = (cx - r.left - (r.width - dw) / 2) * 1000 / dw, y = (cy - r.top - (r.height - dh) / 2) * 1000 / dh;
       return { x: Math.round(Math.max(0, Math.min(1000, x))), y: Math.round(Math.max(0, Math.min(1000, y))) };
     }
@@ -205,6 +209,7 @@
     logEvent('boot', BUILD);
     registerSW();
     pic.img = $('cp-img');
+    pic.img.style.objectFit = PIC_FILL ? 'fill' : 'contain';
     pic.img.addEventListener('load', function () {
       pic.waiting = false;
       if (!pic.loaded) { pic.loaded = true; state.shown = true; if (state.link > 1) msg(null); }
