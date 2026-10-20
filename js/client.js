@@ -40,7 +40,7 @@
 
   /* ------------------------------------------------------------------- state */
 
-  var state = { init: false, link: -1, pixel: 3, vid: false, restartAt: 0, restarts: 0, restartTimer: 0, sizeChecked: false, sizeTries: 0 };
+  var state = { init: false, link: -1, pixel: 3, vid: false, restartAt: 0, restarts: 0, restartTimer: 0, sizeChecked: false, sizeTries: 0, rx: 0, shown: false, videoAt: 0 };
   var link = new LinkClient();
   var presenter = null;
 
@@ -104,7 +104,8 @@
     if (n > 1) {
       link.cmd(CMD.VIDEO);
       presenter.startH264();
-      msg(null);
+      state.rx = 0; state.shown = false; state.videoAt = Date.now();
+      msg(presenter.workerReady ? '영상 기다리는 중…' : '디코더 불러오는 중…\n(처음 한 번 1.4 MB, 느린 인터넷에서는 30초 이상)');
     } else {
       if (prev > 1) presenter.stop();
       presenter.clear();
@@ -186,9 +187,10 @@
       canvas: $('cp-canvas'), canvasWorker: $('cp-canvas-worker'), img: null, statsEl: $('stats'), fit: 'contain',
       onMessage: function (kind, a, b) {
         if (kind === 'size') onSize(a, b);
-        else if (kind === 'needkey' || kind === 'refresh') requestKeyframe();
-        else if (kind === 'ready') { if (state.link > 1) { msg(null); requestKeyframe(); } }
-        else if (kind === 'key') { if (state.link > 1) msg(null); }
+        else if (kind === 'needkey') { requestKeyframe(); if (!state.shown) msg('키프레임 기다리는 중… (수신 ' + state.rx + ')'); }
+        else if (kind === 'refresh') requestKeyframe();
+        else if (kind === 'ready') { if (state.link > 1) { msg('영상 기다리는 중…'); requestKeyframe(); } }
+        else if (kind === 'key') { state.shown = true; if (state.link > 1) msg(null); }
         else if (kind === 'loading') msg('디코더 내려받는 중… (' + a + ')');
         else if (kind === 'slow') msg('디코딩이 영상 속도를 따라가지 못합니다.\n?size=auto 로 해상도를 낮춰 보세요.');
         else if (kind === 'h264error') {
@@ -202,7 +204,7 @@
 
     link.on('init', onInit)
       .on('link', function (j) { if (state.init) setLink(j.link); })
-      .on('video', function (bytes) { if (state.link > 1) presenter.feedH264(bytes); })
+      .on('video', function (bytes) { if (state.link > 1) { state.rx++; presenter.feedH264(bytes); } })
       .on('videodrop', function () { presenter.noteDrop(); })
       .on('superseded', function () { setLink(-1); msg('다른 화면이 어댑터를 사용 중입니다\n화면을 누르면 다시 연결합니다'); })
       .on('close', function () { state.init = false; setLink(-1); })
@@ -216,6 +218,14 @@
     try {
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { if (link.open) link.setNight(isDark()); });
     } catch (e) { /* ignore */ }
+
+    // Nothing on screen for a while: say why instead of leaving a black page.
+    setInterval(function () {
+      if (state.link <= 1 || state.shown || !presenter.workerReady) return;
+      if (Date.now() - state.videoAt < 6000) return;
+      if (state.rx === 0) msg('어댑터가 영상을 보내지 않습니다.\n다른 탭/기기에서 tespush.com 이 열려 있으면 닫고 새로고침하세요.');
+      else { msg('영상은 오는데 디코딩된 화면이 없습니다 (수신 ' + state.rx + ')\n?stats=1 로 열어 확인해 주세요.'); requestKeyframe(); }
+    }, 2000);
 
     link.connect({ w: window.innerWidth, h: window.innerHeight, lang: navigator.language, nav: getTesla() });
   }
