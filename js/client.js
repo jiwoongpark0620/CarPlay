@@ -11,6 +11,8 @@
  *                    type-11 override, so this is the mode that works there.
  *   ?hidpi=1         send the page size x devicePixelRatio in the hello (sharper, more pixels).
  *   ?scale=1.25      same with an explicit factor.
+ *   ?pixel=0         fixed adapter preset 0/1/2 instead of Auto (try 0 for a larger session).
+ *   ?restart=1       rebuild the CarPlay session once so a new hello size takes effect (3075).
  *   ?size=1280x800   try the session override instead (works on branch 1508, not on 3075).
  *   ?stats=1         fps / bitrate / decode time overlay.
  *   ?ws=...          adapter WebSocket URL (default wss://tespush.com/).
@@ -18,7 +20,7 @@
 (function () {
   'use strict';
 
-  var BUILD = 'b6';    // shown in the log: tells which copy the car is running
+  var BUILD = 'b8';    // shown in the log: tells which copy the car is running
   var CMD = LinkClient.CMD, KEY = LinkClient.KEY;
   function $(id) { return document.getElementById(id); }
 
@@ -38,6 +40,9 @@
     return { w: w, h: h };
   }
   var SIZE = parseSize(params.get('size'));     // null = Auto (default)
+  // ?pixel=0|1|2: use one of the adapter's fixed presets instead of Auto (1508: 0 = 1376x1072,
+  // 1 = 800x800, 2 = 768x608; 3075 gave 960x756 for 1). In the car 3075 ignores the hello size.
+  var PIXEL = /^[0-2]$/.test(params.get('pixel') || '') ? +params.get('pixel') : -1;
   var SCALE = params.get('hidpi') === '1' ? (window.devicePixelRatio || 1) : (parseFloat(params.get('scale')) || 1);
   SCALE = Math.max(0.5, Math.min(2, SCALE));
   function helloSize() {
@@ -161,13 +166,39 @@
     }
     // Auto needs the Auto preset: only then does the adapter take the session size from the hello.
     // (3075 with preset 1 turned a 1567x1250 hello into a 960x756 session.)
-    if (!SIZE && j.pixel !== 3) {
+    if (PIXEL >= 0) {
+      if (j.pixel !== PIXEL) {
+        logEvent('pixel', j.pixel + ' -> ' + PIXEL + ' (preset)');
+        state.pixel = PIXEL;
+        link.setKey(KEY.PIXEL, PIXEL);  // a preset change restarts the session
+        needRestart = false;
+      }
+    } else if (!SIZE && j.pixel !== 3) {
       logEvent('pixel', j.pixel + ' -> 3 (auto)');
       state.pixel = 3;
       link.setKey(KEY.PIXEL, 3);        // a preset change restarts the session with the hello size
       needRestart = false;              // the same restart picks up a mode change too
     }
     state.vid = true;
+    // ?restart=1: 3075 does not rebuild the session on a hello, so a new hello size only takes effect
+    // on the next session start. Force one: preset 0 (restart), then back to Auto (restart with the hello).
+    if (!SIZE && PIXEL < 0 && params.get('restart') === '1' && j.link >= 1 && !state.forced) {
+      var key = 'cp.forced:' + location.search, done = false;
+      try { done = sessionStorage.getItem(key) === '1'; sessionStorage.setItem(key, '1'); } catch (e) { /* ignore */ }
+      if (!done) {
+        state.forced = true;
+        logEvent('restart', 'forced: pixel 0');
+        msg('CarPlay 세션 다시 시작 중… (1/2)');
+        link.setKey(KEY.PIXEL, 0);
+        setTimeout(function () {
+          logEvent('restart', 'forced: pixel 3 (auto, hello size)');
+          msg('CarPlay 세션 다시 시작 중… (2/2)');
+          state.pixel = 3; state.sizeChecked = false;
+          link.setKey(KEY.PIXEL, 3);
+        }, 12000);
+        needRestart = false;
+      }
+    }
     setLink(j.link);
     if (j.link === 1) link.cmd(CMD.VIDEO);
     if (needRestart && j.link >= 1) restartSession('mode');
