@@ -18,7 +18,7 @@
 (function () {
   'use strict';
 
-  var BUILD = 'b4';    // shown in the log: tells which copy the car is running
+  var BUILD = 'b5';    // shown in the log: tells which copy the car is running
   var CMD = LinkClient.CMD, KEY = LinkClient.KEY;
   function $(id) { return document.getElementById(id); }
 
@@ -230,7 +230,13 @@
         // With internet, look for a new version now (not only on the browser's own schedule).
         reg.update().then(function () { logEvent('sw', 'update check done'); }, function () { logEvent('sw', 'update check: offline'); });
         reg.addEventListener('updatefound', function () { logEvent('sw', 'new version downloading…'); msg('새 버전 내려받는 중…'); });
-      }, function (e) { logEvent('sw', 'register failed: ' + (e && e.message)); });
+      }, function (e) {
+        logEvent('sw', 'register failed: ' + (e && e.name) + ': ' + (e && e.message));
+        // Tell the two common cases apart: the script is missing (404) or the browser refuses workers.
+        fetch('sw.js', { cache: 'no-store' }).then(function (r) {
+          logEvent('sw', 'sw.js http ' + r.status + ' ' + (r.headers.get('content-type') || '') + (r.redirected ? ' redirected ' + r.url : ''));
+        }, function (err) { logEvent('sw', 'sw.js fetch failed: ' + (err && err.message)); });
+      });
       // A new version took over (it has all its files by then): reload once to run it.
       var swReloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', function () {
