@@ -154,6 +154,14 @@
       link.setKey(KEY.MODE, 1);
       needRestart = true;
     }
+    // Auto needs the Auto preset: only then does the adapter take the session size from the hello.
+    // (3075 with preset 1 turned a 1567x1250 hello into a 960x756 session.)
+    if (!SIZE && j.pixel !== 3) {
+      logEvent('pixel', j.pixel + ' -> 3 (auto)');
+      state.pixel = 3;
+      link.setKey(KEY.PIXEL, 3);        // a preset change restarts the session with the hello size
+      needRestart = false;              // the same restart picks up a mode change too
+    }
     state.vid = true;
     setLink(j.link);
     if (j.link === 1) link.cmd(CMD.VIDEO);
@@ -210,6 +218,31 @@
 
   function boot() {
     logEvent('boot', location.search || '-');
+    // Offline copy: the car usually has no internet on the adapter's Wi-Fi.
+    if ('serviceWorker' in navigator) {
+      logEvent('sw', navigator.serviceWorker.controller ? 'offline copy in use' : 'not yet installed');
+      navigator.serviceWorker.register('sw.js').then(function (reg) {
+        if (!navigator.serviceWorker.controller) {
+          navigator.serviceWorker.ready.then(function () { logEvent('sw', 'installed (works offline from the next visit)'); });
+        }
+      }, function (e) { logEvent('sw', 'register failed: ' + (e && e.message)); });
+      // What the offline copy actually holds (8 files when complete).
+      try {
+        caches.keys().then(function (keys) {
+          var mine = keys.filter(function (k) { return k.indexOf('cp-') === 0; });
+          if (!mine.length) { logEvent('cache', 'empty'); return; }
+          mine.forEach(function (k) {
+            caches.open(k).then(function (c) { return c.keys(); }).then(function (reqs) {
+              var names = reqs.map(function (r) { return new URL(r.url).pathname.split('/').pop() || '/'; });
+              logEvent('cache', k + ': ' + reqs.length + ' files' + (names.indexOf('h264dec.wasm.txt') < 0 ? ' (decoder missing)' : ''));
+            });
+          });
+        });
+      } catch (e) { logEvent('cache', 'unavailable'); }
+      try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(function (p) { logEvent('storage', p ? 'persistent' : 'best-effort'); }); } catch (e) { /* ignore */ }
+    } else {
+      logEvent('sw', 'unsupported');
+    }
     if (params.get('log') === '1') { try { renderLog(JSON.parse(store.get('log') || '[]')); } catch (e) { /* ignore */ } }
     if (!VideoPresenter.canH264() || !VideoPresenter.wasmSimd()) {
       msg('이 브라우저에서는 H.264 디코딩을 할 수 없습니다\n(WebAssembly SIMD / OffscreenCanvas 필요)');
@@ -226,7 +259,10 @@
         else if (kind === 'loading') msg('디코더 내려받는 중… (' + a + ')');
         else if (kind === 'slow') msg('디코딩이 영상 속도를 따라가지 못합니다.\n?size=auto 로 해상도를 낮춰 보세요.');
         else if (kind === 'h264error') {
-          msg('디코더 오류: ' + a + (b ? '\n잠시 후 다시 시도합니다' : ''));
+          logEvent('h264error', a + (b ? ' (transient)' : ''));
+          var offlineHint = /^worker:/.test(String(a)) && !(navigator.serviceWorker && navigator.serviceWorker.controller)
+            ? '\n오프라인 사본이 아직 없습니다. 테더링을 켜고 ?log=1 로 열어\n"sw installed"가 뜬 뒤 새로고침하세요.' : '';
+          msg('디코더 오류: ' + a + offlineHint + (b ? '\n잠시 후 다시 시도합니다' : ''));
           if (b) setTimeout(function () { if (state.link > 1) presenter.startH264(); }, 5000);
         }
       }
@@ -261,6 +297,22 @@
       logEvent('flap-reload', closes.length + ' closes in 20 s');
       location.reload();
     }
+
+    /* Docked <-> full screen: the session size comes from the hello, so reconnect with the new size
+     * once the window has settled. In Auto that restarts CarPlay (a few seconds). */
+    var resizeTimer = 0;
+    window.addEventListener('resize', function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        if (SIZE) return;
+        var hs = helloSize(), cur = link.hello || {};
+        if (Math.abs(hs.w - cur.w) < cur.w * 0.08 && Math.abs(hs.h - cur.h) < cur.h * 0.08) return;
+        logEvent('resize', (cur.w || 0) + 'x' + (cur.h || 0) + ' -> ' + hs.w + 'x' + hs.h);
+        link.hello.w = hs.w; link.hello.h = hs.h;
+        msg('화면 크기에 맞춰 다시 연결 중…');
+        if (link.open) link.drop(); else link.connect();
+      }, 1500);
+    });
 
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) { presenter.pause(); return; }
