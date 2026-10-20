@@ -10,7 +10,7 @@
  */
 'use strict';
 
-var CACHE = 'cp-v3';
+var CACHE = 'cp-v4';
 var FILES = [
   './',
   'index.html',
