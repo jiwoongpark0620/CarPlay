@@ -4,7 +4,7 @@
  * bump CACHE so every car picks up the new set at once. Requests to the adapter are not touched. */
 'use strict';
 
-var CACHE = 'cp-p1';
+var CACHE = 'cp-p3';
 var FILES = ['./', 'index.html', 'js/link.js', 'js/client.js'];
 
 self.addEventListener('install', function (e) {
