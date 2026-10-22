@@ -7,17 +7,19 @@
  * on screen until the new stream's first frame is in.
  *
  * Options: ?refresh=15 (seconds between stream re-opens), ?fit=contain (keep the JPEG's own
- * aspect instead of filling the screen), ?log=1 (event log).
+ * aspect instead of filling the screen), ?btnet=off|on (adapter's Bluetooth internet sharing from
+ * the iPhone; stored in the adapter, so once is enough), ?log=1 (event log).
  */
 (function () {
   'use strict';
 
-  var BUILD = 'p1';
+  var BUILD = 'p3';
   var ADAPTER = 'https://tespush.com/';
   var params = new URLSearchParams(location.search);
   var REFRESH = Math.max(5, parseFloat(params.get('refresh')) || 15) * 1000;
   var FILL = params.get('fit') !== 'contain';
   var LOG = params.get('log') === '1';
+  var BTNET = params.get('btnet') === 'off' ? 1 : params.get('btnet') === 'on' ? 2 : 0;
   function $(id) { return document.getElementById(id); }
 
   /* ---------------------------------------------------------------- log */
@@ -128,9 +130,13 @@
 
   link.on('open', function () { log('open'); msg('어댑터 연결됨'); })
     .on('init', function (j) {
-      log('init', 'link ' + j.link + ' vid ' + j.vid + ' pixel ' + j.pixel + ' ' + (j.SW || ''));
+      log('init', 'link ' + j.link + ' vid ' + j.vid + ' pixel ' + j.pixel + ' btnet ' + j.btnet + ' ' + (j.SW || ''));
       state.init = true;
       link.night(dark());
+      if (BTNET) {
+        log('btnet', (BTNET === 1 ? 'off' : 'on') + ' (was ' + j.btnet + ')');
+        link.setting(Link.KEY_BTNET, BTNET);
+      }
       if (j.vid) {
         // The adapter sends H.264 over the socket instead of JPEGs: switch it to pictures. The mode
         // is taken when a session starts and a resolution change is what starts one, so step to
@@ -194,10 +200,16 @@
 
   /* -------------------------------------------------------- page state */
 
+  /* Keep the picture stream open while the page is hidden (a call screen, the car's own apps on
+   * top). The adapter takes "no picture being pulled" as "no car display": after 120 s it restarts
+   * its Wi-Fi, CarPlay reconnects, and on reconnect the adapter's own hands-free link grabs an
+   * ongoing call (silence both ways). Back in view, open a fresh stream at once: background timers
+   * are throttled, so the periodic re-open may not have run. */
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) { pic.stop(); return; }
+    log('visible', document.hidden ? 'no' : 'yes');
+    if (document.hidden) return;
     if (!link.open) { link.connect(); return; }
-    if (state.link > 1) pic.start();
+    if (state.link > 1) { if (pic.on) pic.open(); else pic.start(); }
   });
   try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { link.night(dark()); }); } catch (e) { /* ignore */ }
 
